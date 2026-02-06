@@ -1,11 +1,10 @@
-
 const DOH_PROVIDERS = [
   'https://cloudflare-dns.com/dns-query',
   'https://dns.google/resolve',
   'https://dns.quad9.net/dns-query',
   'https://doh.opendns.com/dns-query',
-  // 'https://dns.alidns.com/resolve', // Might be slow from Workers
-  // 'https://doh.pub/dns-query'       // DNSPod
+  // 'https://dns.alidns.com/resolve',     // 阿里DNS (从Workers可能较慢)
+  // 'https://doh.pub/dns-query'          // DNSPod
 ];
 
 async function queryDoh(provider: string, domain: string): Promise<string[]> {
@@ -13,19 +12,16 @@ async function queryDoh(provider: string, domain: string): Promise<string[]> {
     const url = new URL(provider);
     url.searchParams.set('name', domain);
     url.searchParams.set('type', 'A');
-    // Google uses 'type=A' but checks 'Accept' header too usually.
-    // Some providers like Google might not support application/dns-json on /dns-query path perfectly without specific params,
-    // but standard is `name` and `type`.
-    
-    // Adjust for Google specifically if needed, but Google supports /resolve?name=...
-    // Let's stick to standard params which most support.
+    // Google DNS使用'type=A'参数，但也通常检查'Accept'头部。
+    // 一些提供商可能不完全支持/dns-query路径上的application/dns-json，
+    // 但标准是使用`name`和`type`参数。
 
     const res = await fetch(url.toString(), {
       headers: { 'Accept': 'application/dns-json' }
     });
 
     if (!res.ok) {
-      // console.warn(`DoH query failed for ${provider}: ${res.status}`);
+      // console.warn(`DoH查询失败 ${provider}: ${res.status}`);
       return [];
     }
 
@@ -35,22 +31,27 @@ async function queryDoh(provider: string, domain: string): Promise<string[]> {
     }
 
     return data.Answer
-      .filter((r: any) => r.type === 1) // 1 is A record
-      .map((r: any) => r.data);
-  } catch (e) {
-    // console.warn(`Error querying ${provider}:`, e);
+      .filter((record: any) => record.type === 1) // 1代表A记录
+      .map((record: any) => record.data);
+  } catch (error) {
+    // console.warn(`查询${provider}时出错:`, error);
     return [];
   }
 }
 
+/**
+ * 使用多个DoH提供商解析域名的A记录
+ * @param domain - 要解析的域名
+ * @returns 返回去重后的IP地址数组
+ */
 export async function resolveA(domain: string): Promise<string[]> {
-  console.log(`Resolving A records for ${domain} using multiple DoH providers...`);
+  console.log(`正在使用多个DoH提供商解析 ${domain} 的A记录...`);
   
-  // We can query multiple providers in parallel to get a wider set of IPs
-  // Since DNS rotation often returns different subsets.
-  const promises = DOH_PROVIDERS.map(p => queryDoh(p, domain));
+  // 并行查询多个提供商以获取更广泛的IP集合
+  // 因为DNS轮询通常返回不同的IP子集
+  const promises = DOH_PROVIDERS.map(provider => queryDoh(provider, domain));
   
-  // Also add a few repeated queries to Cloudflare/Google to try and catch round-robin variations
+  // 额外添加对Cloudflare和Google的重复查询，尝试捕获轮询变化
   promises.push(queryDoh('https://cloudflare-dns.com/dns-query', domain));
   promises.push(queryDoh('https://dns.google/resolve', domain));
 
@@ -64,10 +65,10 @@ export async function resolveA(domain: string): Promise<string[]> {
   });
 
   const ips = Array.from(uniqueIps);
-  console.log(`Resolved ${ips.length} unique IPs for ${domain}:`, ips);
+  console.log(`为 ${domain} 解析到 ${ips.length} 个唯一IP地址:`, ips);
   
   if (ips.length === 0) {
-      console.warn(`No IPs found for ${domain} from any provider.`);
+      console.warn(`未从任何提供商找到 ${domain} 的IP地址。`);
   }
 
   return ips;

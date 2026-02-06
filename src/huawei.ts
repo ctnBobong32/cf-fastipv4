@@ -11,6 +11,7 @@ export class HuaweiDNS {
     endpoint: string = 'dns.ap-southeast-1.myhuaweicloud.com',
     projectId?: string
   ) {
+  
     this.signer = new HuaweiSigner(ak, sk, projectId);
     this.endpoint = endpoint.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
   }
@@ -58,17 +59,12 @@ export class HuaweiDNS {
     return resData;
   }
 
-  /**
-   * 根据域名找到所属 zone（最长后缀匹配）
-   * 例如：cdn.example.com -> 匹配 example.com.
-   */
   async getZoneId(domain: string): Promise<string | null> {
     console.log(`查找域名 ${domain} 对应的区域...`);
 
     const domainWithDot = domain.endsWith('.') ? domain : domain + '.';
 
     try {
-      // 公网 zone
       const data = await this.request('GET', '/v2/zones?type=public');
 
       if (!data?.zones || !Array.isArray(data.zones)) {
@@ -80,7 +76,6 @@ export class HuaweiDNS {
       for (const zone of data.zones) {
         if (!zone?.name || !zone?.id) continue;
 
-        // zone.name 通常以 '.' 结尾，如 example.com.
         if (domainWithDot.endsWith(zone.name)) {
           if (!bestMatch || zone.name.length > bestMatch.name.length) {
             bestMatch = zone;
@@ -101,11 +96,6 @@ export class HuaweiDNS {
     }
   }
 
-  /**
-   * 更新/创建 A 记录（把 ips 写到 records）
-   * @param domain 要更新的完整域名（如 cdn.example.com）
-   * @param ips IPv4 列表
-   */
   async updateRecord(domain: string, ips: string[]) {
     console.log(`正在更新记录 ${domain}，新的IP地址为:`, ips);
 
@@ -114,10 +104,8 @@ export class HuaweiDNS {
       throw new Error(`找不到域名 ${domain} 对应的区域`);
     }
 
-    // 华为云 recordset 返回的 name 常见是带点的 FQDN：www.example.com.
     const fqdn = domain.endsWith('.') ? domain : domain + '.';
 
-    // 1) 查询是否已有记录
     const searchPath =
       `/v2/zones/${zoneId}/recordsets?name=${encodeURIComponent(fqdn)}&type=A`;
     const searchRes = await this.request('GET', searchPath);
@@ -134,7 +122,6 @@ export class HuaweiDNS {
       records: ips,
     };
 
-    // 2) 存在则更新，不存在则创建
     if (existingRecord?.id) {
       console.log(`记录已存在（${existingRecord.id}），正在更新...`);
       await this.request('PUT', `/v2/zones/${zoneId}/recordsets/${existingRecord.id}`, body);

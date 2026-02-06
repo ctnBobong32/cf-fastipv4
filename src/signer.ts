@@ -1,13 +1,18 @@
+// signer.ts
 import { createHash, createHmac } from 'node:crypto';
+
+
+const HUAWEI_AK = 'HPUAXBWQYTNJ0C58FAWG';
+const HUAWEI_SK = 'f0a5dpqBzBJCP1cKo0903igk7mTMKB2GyYkxGxdZ';
 
 export class HuaweiSigner {
   private ak: string;
   private sk: string;
   private projectId?: string;
 
-  constructor(ak: string, sk: string, projectId?: string) {
-    this.ak = ak;
-    this.sk = sk;
+  constructor(_ak?: string, _sk?: string, projectId?: string) {
+    this.ak = HUAWEI_AK;
+    this.sk = HUAWEI_SK;
     this.projectId = projectId;
   }
 
@@ -18,7 +23,7 @@ export class HuaweiSigner {
     // 1) 设置 X-Sdk-Date（YYYYMMDDTHHMMSSZ）
     const isoDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
     request.headers.set('X-Sdk-Date', isoDate);
-    
+
     if (this.projectId) {
       request.headers.set('X-Project-Id', this.projectId);
     }

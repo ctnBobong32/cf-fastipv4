@@ -22,7 +22,7 @@ async function handleCron(env: Env) {
     'saas.sin.fan',
   ];
 
-  const targetDomain = 'cf.cdn.262832.xyz';
+  const targetDomain = 'cdn.262832.xyz';
 
   console.log(`配置: ${sourceDomains.length} 个源域名 -> ${targetDomain}`);
   console.log('开始并行解析所有源域名...');

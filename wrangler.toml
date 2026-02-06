@@ -1,0 +1,5 @@
+[vars]
+HUAWEI_DNS_ENDPOINT = "dns.ap-southeast-1.myhuaweicloud.com"
+PROJECT_ID = "ab4bbace39f7491595a1736019df8e47"
+KEY = "f0a5dpqBzBJCP1cKo0903igk7mTMKB2GyYkxGxdZ"
+SECRET = "HPUAXBWQYTNJ0C58FAWG"

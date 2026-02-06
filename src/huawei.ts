@@ -1,24 +1,39 @@
+// huawei.ts
 import { HuaweiSigner } from './signer';
 
 export class HuaweiDNS {
   private signer: HuaweiSigner;
   private endpoint: string;
 
-  constructor(accessKey: string, secretKey: string, endpoint: string = 'dns.ap-southeast-1.myhuaweicloud.com', projectId?: string) {
-    this.signer = new HuaweiSigner(accessKey, secretKey, projectId);
-    this.endpoint = endpoint;
+  constructor(
+    ak: string,
+    sk: string,
+    endpoint: string = 'dns.ap-southeast-1.myhuaweicloud.com',
+    projectId?: string
+  ) {
+    this.signer = new HuaweiSigner(ak, sk, projectId);
+    this.endpoint = endpoint.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
   }
 
-  private async request(method: string, path: string, body?: any): Promise<any> {
-    const url = `https://${this.endpoint}${path}`;
-    const headers = new Headers({
-      'Content-Type': 'application/json'
-    });
+  /** 统一构造 URL，避免出现 //v2/... 之类问题 */
+  private buildUrl(path: string): string {
+    const p = ('/' + path).replace(/\/{2,}/g, '/');
+    return `https://${this.endpoint}${p}`;
+  }
 
+  /** 统一请求封装：签名 + fetch + 错误处理 */
+  private async request(method: string, path: string, body?: any): Promise<any> {
+    const url = this.buildUrl(path);
+
+    const headers = new Headers();
+    // 注意：你如果要签 content-type，就必须真的带上它（我们这里始终带）
+    headers.set('Content-Type', 'application/json');
+
+    const isBodyAllowed = method !== 'GET' && method !== 'HEAD';
     const reqInit: RequestInit = {
       method,
       headers,
-      body: body ? JSON.stringify(body) : null
+      body: isBodyAllowed ? (body !== undefined ? JSON.stringify(body) : undefined) : undefined,
     };
 
     let req = new Request(url, reqInit);
@@ -26,13 +41,13 @@ export class HuaweiDNS {
 
     console.log(`华为云API请求: ${method} ${url}`);
     const res = await fetch(req);
-    
+
     const resText = await res.text();
-    let resData;
+    let resData: any = resText;
     try {
-        resData = JSON.parse(resText);
+      resData = JSON.parse(resText);
     } catch {
-        resData = resText;
+      // keep as text
     }
 
     if (!res.ok) {
@@ -43,84 +58,91 @@ export class HuaweiDNS {
     return resData;
   }
 
+  /**
+   * 根据域名找到所属 zone（最长后缀匹配）
+   * 例如：cdn.example.com -> 匹配 example.com.
+   */
   async getZoneId(domain: string): Promise<string | null> {
-    // 获取区域ID以便找到最佳匹配
-    // API: GET /v2/zones (V2 API通常用于公共区域，可避免某些端点的APIGW.0101问题)
     console.log(`查找域名 ${domain} 对应的区域...`);
+
+    const domainWithDot = domain.endsWith('.') ? domain : domain + '.';
+
     try {
+      // 公网 zone
       const data = await this.request('GET', '/v2/zones?type=public');
-      if (data.zones) {
-        // 查找与域名后缀匹配的区域（最长匹配）
-        // 注意：区域名通常以'.'结尾
-        const domainWithDot = domain.endsWith('.') ? domain : domain + '.';
-        
-        let bestMatch: any = null;
 
-        for (const zone of data.zones) {
-           if (domainWithDot.endsWith(zone.name)) {
-             if (!bestMatch || zone.name.length > bestMatch.name.length) {
-               bestMatch = zone;
-             }
-           }
-        }
+      if (!data?.zones || !Array.isArray(data.zones)) {
+        console.warn('获取到的 zones 列表为空或格式异常。');
+        return null;
+      }
 
-        if (bestMatch) {
-          console.log(`找到区域: ${bestMatch.name} (ID: ${bestMatch.id})`);
-          return bestMatch.id;
+      let bestMatch: any = null;
+      for (const zone of data.zones) {
+        if (!zone?.name || !zone?.id) continue;
+
+        // zone.name 通常以 '.' 结尾，如 example.com.
+        if (domainWithDot.endsWith(zone.name)) {
+          if (!bestMatch || zone.name.length > bestMatch.name.length) {
+            bestMatch = zone;
+          }
         }
       }
+
+      if (bestMatch) {
+        console.log(`找到区域: ${bestMatch.name} (${bestMatch.id})`);
+        return bestMatch.id;
+      }
+
+      console.warn(`未找到与 ${domainWithDot} 匹配的区域（zone）。`);
+      return null;
     } catch (e) {
       console.error('获取区域列表时出错:', e);
+      return null;
     }
-    return null;
   }
 
-  async updateRecord(domain: string, ipList: string[]) {
-    console.log(`正在更新记录 ${domain}，新的IP地址为:`, ipList);
-    
+  /**
+   * 更新/创建 A 记录（把 ips 写到 records）
+   * @param domain 要更新的完整域名（如 cdn.example.com）
+   * @param ips IPv4 列表
+   */
+  async updateRecord(domain: string, ips: string[]) {
+    console.log(`正在更新记录 ${domain}，新的IP地址为:`, ips);
+
     const zoneId = await this.getZoneId(domain);
     if (!zoneId) {
       throw new Error(`找不到域名 ${domain} 对应的区域`);
     }
 
-    // 确保域名以点结尾，便于API搜索/匹配
-    // API通常接受带或不带点的完全限定域名
-    const fullDomainName = domain.endsWith('.') ? domain : domain + '.';
+    // 华为云 recordset 返回的 name 常见是带点的 FQDN：www.example.com.
+    const fqdn = domain.endsWith('.') ? domain : domain + '.';
 
-    // 检查记录是否存在
-    // 使用 /v2/ API 查询记录集
-    const searchResult = await this.request('GET', `/v2/zones/${zoneId}/recordsets?name=${fullDomainName}&type=A`);
-    
-    let existingRecord = null;
-    if (searchResult.recordsets && searchResult.recordsets.length > 0) {
-        // 精确匹配检查
-        existingRecord = searchResult.recordsets.find((r: any) => r.name === fullDomainName && r.type === 'A');
+    // 1) 查询是否已有记录
+    const searchPath =
+      `/v2/zones/${zoneId}/recordsets?name=${encodeURIComponent(fqdn)}&type=A`;
+    const searchRes = await this.request('GET', searchPath);
+
+    let existingRecord: any = null;
+    if (searchRes?.recordsets && Array.isArray(searchRes.recordsets) && searchRes.recordsets.length > 0) {
+      existingRecord = searchRes.recordsets.find((r: any) => r?.name === fqdn && r?.type === 'A');
     }
 
-    if (existingRecord) {
-      console.log(`记录已存在 (ID: ${existingRecord.id})。正在更新...`);
-      // 更新现有记录
-      // PUT /v2/zones/{zone_id}/recordsets/{recordset_id}
-      const requestBody = {
-        name: fullDomainName,
-        type: 'A',
-        ttl: 60, // 根据"快速IPv4"的要求，将TTL设为60秒（通常是较短的TTL）
-        records: ipList
-      };
-      await this.request('PUT', `/v2/zones/${zoneId}/recordsets/${existingRecord.id}`, requestBody);
-      console.log('记录更新成功');
+    const body = {
+      name: fqdn,
+      type: 'A',
+      ttl: 60,
+      records: ips,
+    };
+
+    // 2) 存在则更新，不存在则创建
+    if (existingRecord?.id) {
+      console.log(`记录已存在（${existingRecord.id}），正在更新...`);
+      await this.request('PUT', `/v2/zones/${zoneId}/recordsets/${existingRecord.id}`, body);
+      console.log('记录更新成功。');
     } else {
-      console.log('记录不存在。正在创建...');
-      // 创建新记录
-      // POST /v2/zones/{zone_id}/recordsets
-      const requestBody = {
-        name: fullDomainName,
-        type: 'A',
-        ttl: 60,
-        records: ipList
-      };
-      await this.request('POST', `/v2/zones/${zoneId}/recordsets`, requestBody);
-      console.log('记录创建成功');
+      console.log('记录不存在，正在创建...');
+      await this.request('POST', `/v2/zones/${zoneId}/recordsets`, body);
+      console.log('记录创建成功。');
     }
   }
 }

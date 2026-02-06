@@ -77,7 +77,7 @@ async function handleCron(env: Env) {
     
     // 4. 更新华为云DNS（汇总记录）
     console.log(`\n正在更新目标域名 ${targetDomain}...`);
-    const endpoint = env.HUAWEI_DNS_ENDPOINT || 'dns.myhuaweicloud.com';
+    const endpoint = env.HUAWEI_DNS_ENDPOINT || 'dns.ap-southeast-1.myhuaweicloud.com';
     const huawei = new HuaweiDNS(env.KEY, env.SECRET, endpoint, env.PROJECT_ID);
     
     try {
